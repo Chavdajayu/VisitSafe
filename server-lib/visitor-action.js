@@ -31,6 +31,7 @@ export default async function handler(req, res) {
         const action = query.action || body.action;
         const residencyId = query.residencyId || body.residencyId;
         const requestId = query.requestId || body.requestId;
+        const token = query.token || body.token;
         const username = body.username || "notification_action"; // Optional
 
         if (!action || !["approve", "reject"].includes(action)) {
@@ -62,6 +63,21 @@ export default async function handler(req, res) {
         }
 
         const currentStatus = doc.data().status;
+        const storedToken = doc.data().approvalToken;
+        const providedToken = query.token || body.token;
+
+        // Security Check: Verify Approval Token
+        if (storedToken) {
+            if (!providedToken || providedToken !== storedToken) {
+                console.warn(`[VisitorAction] Invalid token for request ${requestId}. Provided: ${providedToken}`);
+                return res.status(403).json({ error: "Unauthorized: Invalid approval token" });
+            }
+        } else {
+            // Optional: If no token stored (legacy), decide whether to allow.
+            // For safety in this overhaul, we'll log warning but allow if it's a legacy doc.
+            console.warn(`[VisitorAction] Legacy request without token: ${requestId}`);
+        }
+
         if (currentStatus !== "pending") {
             if (req.method === "GET") {
                 res.redirect(302, "/");

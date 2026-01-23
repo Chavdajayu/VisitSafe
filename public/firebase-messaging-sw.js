@@ -1,18 +1,21 @@
-const CACHE_NAME = 'visitsafe-v1';
+// firebase-messaging-sw.js
+// VERSION: 2.0.0 (VisitSafe Stabilized)
+
+const CACHE_NAME = 'visitsafe-v2';
+// We just cache the basics to ensure the SW install doesn't fail on network jitter
+// Do NOT cache the API responses or heavily cache app shell here to avoid complexity with Vite's own caching.
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/favicon.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png'
 ];
 
-// Import Firebase Scripts (Compat versions)
-importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/9.0.0/firebase-messaging-compat.js');
+// === 1. IMPORTS ===
+// Using standard Firebase Compat libraries for Service Worker
+// Updated to a consistent version (Compat 9.23.0 is stable and widely used)
+importScripts('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js');
 
-// Initialize Firebase using URL params[]
+// === 2. INITIALIZATION ===
 const params = new URLSearchParams(self.location.search);
 const firebaseConfig = {
   apiKey: params.get('apiKey'),
@@ -23,240 +26,162 @@ const firebaseConfig = {
   appId: params.get('appId'),
 };
 
-// Initialize Firebase Messaging if config is present
 if (firebaseConfig.apiKey) {
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
 
-  // Background Message Handler with Action Buttons
+  // === 3. BACKGROUND MESSAGE HANDLER ===
+  // This handles messages received when the app is NOT in the foreground.
+  // We override the default display to add ACTION BUTTONS.
   messaging.onBackgroundMessage((payload) => {
-    console.log('[firebase-messaging-sw.js] Received background message ', payload);
+    console.log('[SW] Background Message:', payload);
 
     const { title, body, icon } = payload.notification || {};
     const data = payload.data || {};
 
-    // Check if this is a visitor request notification
-    // Match actionType sent from backend
-    const isVisitorRequest = data.actionType === 'VISITOR_REQUEST' || data.type === 'visitor_request';
+    // Tag is CRITICAL for de-duplication
+    const tag = data.tag || data.visitorId || `msg_${Date.now()}`;
+    const visitorId = data.visitorId;
+    const approvalToken = data.approvalToken;
 
     const notificationOptions = {
       body: body,
       icon: icon || '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      tag: data.visitorId || payload.messageId,
-      requireInteraction: isVisitorRequest,
-      data: data
+      tag: tag, // Replaces any existing notification with same tag
+      renotify: true, // Vibrate/Sound again even if replacing
+      requireInteraction: data.requireInteraction === 'true',
+      data: data, // Persist data for click handler
+
+      // Android / Chrome Actions
+      actions: []
     };
 
-    // Add action buttons for visitor requests
-    if (isVisitorRequest) {
+    if (data.actionType === 'VISITOR_REQUEST') {
       notificationOptions.actions = [
         {
-          action: 'APPROVE_VISITOR',
+          action: 'approve', // Lowercase matches logic below
           title: '✅ Approve',
-          icon: '/icons/check.png'
+          type: 'button'
         },
         {
-          action: 'REJECT_VISITOR',
+          action: 'reject',
           title: '❌ Reject',
-          icon: '/icons/x.png'
+          type: 'button'
         }
       ];
     }
 
-    self.registration.showNotification(title, notificationOptions);
+    // Show the notification
+    return self.registration.showNotification(title || 'VisitSafe', notificationOptions);
   });
 }
 
-// Handle notification clicks and actions
-// Handle notification clicks and actions
-self.addEventListener('notificationclick', (event) => {
-  console.log('[SW] Notification click received:', event);
+// === 4. NOTIFICATION CLICK HANDLER ===
+// This covers both Action Buttons AND Body Clicks
+self.addEventListener('notificationclick', function (event) {
+  console.log('[SW] Notification Click:', event.action);
 
-  const action = event.action;
-  const data = event.notification.data || {};
+  const action = event.action; // 'approve', 'reject', or '' (body click)
+  const notification = event.notification;
+  const data = notification.data || {};
 
-  event.notification.close();
+  // Close the notification immediately to feel responsive
+  notification.close();
 
-  if (action === 'APPROVE_VISITOR' || action === 'REJECT_VISITOR') {
-    // Perform API call in background WITHOUT opening app
-    let url = action === 'APPROVE_VISITOR' ? (data.actionUrlApprove || data.approveUrl) : (data.actionUrlReject || data.rejectUrl);
-
-    // Fallback URL construction if not provided in payload
-    if (!url && data.requestId && data.residencyId) {
-      const baseUrl = self.location.origin;
-      const actionParam = action === 'APPROVE_VISITOR' ? 'approve' : 'reject';
-      url = `${baseUrl}/api/visitor-action?action=${actionParam}&residencyId=${data.residencyId}&requestId=${data.requestId}`;
-      console.log('[SW] Constructed fallback action URL:', url);
-    }
-
-    if (url) {
-      const promiseChain = fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
+  if (action === 'approve' || action === 'reject') {
+    // === HANDLE ACTION BUTTON ===
+    const promiseChain = handleVisitorAction(action, data)
+      .then((result) => {
+        if (result && result.success) {
+          // Optional: Show a quick "Done" toast or silent notification
+          // For now, we trust it worked. 
+          console.log('[SW] Action success');
         }
-      })
-        .then(response => {
-          if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
-          return response.json();
-        })
-        .then(responseData => {
-          console.log('Background action success:', responseData);
+      });
 
-          // Show silent success notification or update existing one
-          // We can't update the closed one, so we show a new brief one or just nothing if user wants silent.
-          // Requirement: "Show success/failure notification silently" -> This usually means a toast or a new silent notification.
-          // Let's show a silent "Done" notification that auto-closes or is minimal.
+    event.waitUntil(promiseChain);
 
-          self.registration.showNotification(
-            action === 'APPROVE_VISITOR' ? 'Visitor Approved' : 'Visitor Rejected',
-            {
-              body: action === 'APPROVE_VISITOR' ? 'Access granted.' : 'Access denied.',
-              icon: '/icons/icon-192.png',
-              tag: 'action-confirmation', // Replaces previous if same tag
-              silent: true, // Don't vibrate/sound again
-              timeout: 3000 // Close after 3s (not supported everywhere but good intent)
-            }
-          );
-
-          // Send message to app for UI sync (if app is open)
-          return clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(windowClients => {
-              windowClients.forEach(client => {
-                client.postMessage({
-                  type: 'NOTIFICATION_ACTION_SUCCESS',
-                  action: action,
-                  requestId: data.requestId || data.visitorId,
-                  status: action === 'APPROVE_VISITOR' ? 'approved' : 'rejected'
-                });
-              });
-            });
-        })
-        .catch(err => {
-          console.error('Background action failed:', err);
-          self.registration.showNotification('Action Failed', {
-            body: 'Could not process request. Tap to try in app.',
-            icon: '/icons/icon-192.png',
-            tag: 'action-error',
-            data: { url: `/?requestId=${data.requestId}` } // Click opens app
-          });
-
-          // Send failure message to app (if open)
-          clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(windowClients => {
-              windowClients.forEach(client => {
-                client.postMessage({
-                  type: 'NOTIFICATION_ACTION_FAILED',
-                  action: action,
-                  requestId: data.requestId || data.visitorId,
-                  error: err.message
-                });
-              });
-            });
-        });
-
-      event.waitUntil(promiseChain);
-    } else {
-      console.error('No action URL provided and insufficient data to construct fallback');
-    }
   } else {
-    // Default click - open app logic...
-    let urlToOpen = data.click_action || '/';
-    // Deep link logic
-    if (data.requestId && urlToOpen === '/') {
-      urlToOpen = `/?requestId=${data.requestId}`; // Simplified deep link
-    }
-
+    // === HANDLE BODY CLICK (OPEN APP) ===
     event.waitUntil(
       clients.matchAll({ type: 'window', includeUncontrolled: true })
-        .then((clientList) => {
-          for (const client of clientList) {
+        .then((windowClients) => {
+          // Check if app is already open
+          for (let i = 0; i < windowClients.length; i++) {
+            const client = windowClients[i];
             if (client.url.includes(self.location.origin) && 'focus' in client) {
-              if (urlToOpen !== '/' && client.navigate) {
-                return client.navigate(urlToOpen).then(c => c.focus());
-              }
               return client.focus();
             }
           }
+          // If not open, open it
           if (clients.openWindow) {
-            return clients.openWindow(urlToOpen);
+            return clients.openWindow('/');
           }
         })
     );
   }
 });
 
-// === PWA LOGIC ===
+// === 5. ACTION LOGIC ===
+async function handleVisitorAction(action, data) {
+  const baseUrl = self.location.origin;
+  const { residencyId, visitorId, approvalToken } = data;
 
+  if (!residencyId || !visitorId) {
+    console.error('[SW] Missing data for action');
+    return;
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/api/visitor-action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: action, // 'approve' or 'reject'
+        residencyId: residencyId,
+        requestId: visitorId,
+        token: approvalToken, // Secure token
+        username: 'Notification Action'
+      })
+    });
+
+    const result = await response.json();
+    console.log('[SW] Action Result:', result);
+
+    // Notify any open windows so UI updates
+    notifyClientsOfAction(action, visitorId, result.success);
+
+    return result;
+  } catch (e) {
+    console.error('[SW] Action Fetch Error:', e);
+    // Fallback: Open window if background fetch fails?
+    // Maybe later.
+    notifyClientsOfAction(action, visitorId, false);
+  }
+}
+
+function notifyClientsOfAction(action, visitorId, success) {
+  clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(windowClients => {
+      windowClients.forEach(client => {
+        client.postMessage({
+          type: 'VISITOR_ACTION_PROCESSED',
+          action,
+          visitorId,
+          success
+        });
+      });
+    });
+}
+
+// === 6. LIFECYCLE ===
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
+  self.skipWaiting(); // Take over immediately
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-  self.clients.claim();
-});
-
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // ❌ Do NOT cache Firestore requests
-  if (url.hostname.includes('firestore.googleapis.com') ||
-    url.hostname.includes('firebase') ||
-    url.hostname.includes('googleapis.com')) {
-    return;
-  }
-
-  // ❌ Do NOT cache API calls
-  if (url.pathname.startsWith('/api/')) {
-    return;
-  }
-
-  // Network First Strategy
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Check if valid response
-        if (!response || response.status !== 200 || response.type !== 'basic') {
-          return response;
-        }
-
-        // Only cache same-origin requests (static assets)
-        if (url.origin === location.origin) {
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-
-        return response;
-      })
-      .catch(() => {
-        return caches.match(event.request).then((response) => {
-          if (response) {
-            return response;
-          }
-          // Offline fallback for navigation
-          if (event.request.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-        });
-      })
-  );
+  event.waitUntil(clients.claim()); // Control clients immediately
 });

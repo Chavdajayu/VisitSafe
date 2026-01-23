@@ -1,7 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
-import { initMessaging, requestToken } from "@/lib/firebase-messaging";
 
 // Register Service Worker in production
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
@@ -18,19 +17,13 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 
     navigator.serviceWorker.register(`/firebase-messaging-sw.js?${firebaseConfig}`)
       .then((registration) => {
-         console.log('SW registered:', registration);
-         // Initialize messaging after SW registration
-         initMessaging();
+        console.log('SW registered:', registration);
       })
       .catch(error => {
-         console.log('SW registration failed:', error);
+        console.log('SW registration failed:', error);
       });
   });
 
-  // Request permission on user interaction (global click listener)
-  window.addEventListener('click', () => {
-     requestToken();
-  }, { once: true });
 }
 
 createRoot(document.getElementById("root")).render(<App />);

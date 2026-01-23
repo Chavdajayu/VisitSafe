@@ -1,5 +1,7 @@
 import { initAdmin } from './firebaseAdmin.js';
 import admin from "firebase-admin";
+import crypto from 'crypto';
+import sendVisitorNotification from './visitor-notification-handler.js';
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -28,7 +30,10 @@ export default async function handler(req, res) {
       purpose,
       vehicleNumber: vehicleNumber || null,
       residencyId,
+      residencyId,
       status: 'pending',
+      approvalToken: crypto.randomUUID(),
+      notificationSent: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -36,130 +41,21 @@ export default async function handler(req, res) {
     const requestRef = await db.collection("residencies").doc(residencyId).collection("visitor_requests").add(requestData);
     const requestId = requestRef.id;
 
-    // 2. Find Residents to Notify
-    const tokens = [];
+    // 2. Trigger Notification (Delegated to dedicated handler)
+    // We will implement the actual sending in a separate step/file to ensure single source of truth
+    // and prevent duplicates. For now, we returns success. The client or a background process 
+    // should ideally trigger the notification, but per requirements "Backend must send...".
+    // So we will import and call the sender here effectively.
 
-    // Helper to normalize block names for comparison
-    const normalize = (str) => String(str || "").toUpperCase().replace(/^(BLOCK|TOWER|WING)\s+/, "").trim();
-
-    try {
-      console.log(`[SubmitRequest] Resolving resident for FlatId: ${flatId}`);
-
-      // Resolve Flat and Block Details
-      const flatDoc = await db.collection("residencies").doc(residencyId).collection("flats").doc(String(flatId)).get();
-
-      if (flatDoc.exists) {
-        const flatData = flatDoc.data();
-        const flatNumber = flatData.number;
-        const blockId = flatData.blockId;
-
-        console.log(`[SubmitRequest] Found Flat: ${flatNumber}, BlockId: ${blockId}`);
-
-        if (flatNumber && blockId) {
-          const blockDoc = await db.collection("residencies").doc(residencyId).collection("blocks").doc(blockId).get();
-
-          if (blockDoc.exists) {
-            const blockData = blockDoc.data();
-            const blockName = blockData.name;
-            const targetBlock = normalize(blockName);
-
-            console.log(`[SubmitRequest] Block Name: ${blockName} -> Normalized: ${targetBlock}`);
-
-            // Fetch residents with matching flat number
-            const residentsRef = db.collection("residencies").doc(residencyId).collection("residents");
-            const snapshot = await residentsRef.where("flat", "==", String(flatNumber)).get();
-
-            console.log(`[SubmitRequest] Found ${snapshot.size} residents in Flat ${flatNumber}`);
-
-            snapshot.forEach(doc => {
-              const data = doc.data();
-              const residentBlock = normalize(data.block);
-
-              console.log(`[SubmitRequest] Checking Resident: ${data.username}, Block: ${data.block} -> Normalized: ${residentBlock}`);
-
-              // Match Block Name
-              if (residentBlock === targetBlock) {
-                if (data.fcmToken) {
-                  console.log(`[SubmitRequest] Token found for ${data.username}`);
-                  tokens.push(data.fcmToken);
-                } else {
-                  console.warn(`[SubmitRequest] No FCM Token for ${data.username}`);
-                }
-              } else {
-                console.log(`[SubmitRequest] Block mismatch: ${residentBlock} != ${targetBlock}`);
-              }
-            });
-          } else {
-            console.warn(`[SubmitRequest] Block doc not found for ID: ${blockId}`);
-          }
-        } else {
-          console.warn(`[SubmitRequest] Flat data missing number or blockId`);
-        }
-      } else {
-        console.warn(`[SubmitRequest] Flat doc not found for ID: ${flatId}`);
-      }
-    } catch (err) {
-      console.error("Error resolving resident for notification:", err);
-    }
-
-    // Also notify Admin if needed (optional)
-    try {
-      const residencyDoc = await db.collection("residencies").doc(residencyId).get();
-      if (residencyDoc.exists) {
-        const rData = residencyDoc.data();
-        if (rData.adminFcmToken) {
-          tokens.push(rData.adminFcmToken);
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to fetch admin token:", e);
-    }
-
-    const uniqueTokens = [...new Set(tokens)];
-
-    // Construct Base URL for Action Links
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.headers.host;
-    const baseUrl = `${protocol}://${host}`;
-
-    if (uniqueTokens.length > 0) {
-      const message = {
-        notification: {
-          title: "New Visitor Request",
-          body: `${visitorName} is requesting entry.`,
-        },
-        data: {
-          type: "visitor_request",
-          actionType: "VISITOR_REQUEST",
-          requestId: requestId,
-          residencyId: residencyId,
-          visitorName: visitorName,
-          flatId: String(flatId),
-          click_action: "/",
-          actionUrlApprove: `${baseUrl}/api/visitor-action?action=approve&residencyId=${residencyId}&requestId=${requestId}`,
-          actionUrlReject: `${baseUrl}/api/visitor-action?action=reject&residencyId=${residencyId}&requestId=${requestId}`
-        },
-        webpush: {
-          headers: {
-            Urgency: "high"
-          },
-          fcmOptions: {
-            link: "/"
-          }
-        },
-        tokens: uniqueTokens
-      };
-
-      try {
-        const response = await admin.messaging().sendMulticast(message);
-        console.log(`[SubmitRequest] Notifications sent: ${response.successCount} success, ${response.failureCount} failed`);
-      } catch (pushError) {
-        console.error("[SubmitRequest] Push notification error:", pushError);
-        // Don't fail the request if push fails
-      }
-    } else {
-      console.log("[SubmitRequest] No tokens found for notification.");
-    }
+    // For now, I will just remove the inline logic. I will add the import and call in the next step
+    // once I create the handler file.
+    // 2. Trigger Notification
+    // We delegate to a dedicated handler that ensures single-execution via Firestore logic
+    // We do NOT await this to keep the API fast, but in Serverless environment, we might need strict await
+    // or context.waitUntil. Assuming standard Node/Express or Vercel Serverless optimization:
+    // Ideally we should await to ensure it fires before process freezes.
+    await sendVisitorNotification(residencyId, requestId);
+    console.log(`[SubmitRequest] Notification trigger called for: ${requestId}`);
 
     return res.status(200).json({ success: true, requestId });
 

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useAuth } from '@/hooks/use-auth.jsx';
-import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
+import { getMessaging, onMessage, isSupported } from 'firebase/messaging';
 import { app } from '@/lib/firebase';
-import { storage } from '@/lib/storage';
+import { requestToken } from '@/lib/firebase-messaging';
 
 export function NotificationManager() {
   const { user } = useAuth();
@@ -15,48 +15,33 @@ export function NotificationManager() {
         const supported = await isSupported();
         if (!supported) return;
 
-        if ('serviceWorker' in navigator) {
-          await navigator.serviceWorker.register('/service-worker.js');
+        // SW Registration is handled in main.jsx to ensure single registration with correct localized config
+
+        // Request Token & Save to DB (replaces old token)
+        if (user.username && user.residencyId) {
+          await requestToken(user.username, user.role, user.residencyId);
         }
 
-        if (Notification.permission === 'default') {
-          const permission = await Notification.requestPermission();
-          if (permission !== 'granted') return;
-        }
+        // Foreground Message Handler
+        const messaging = getMessaging(app);
+        onMessage(messaging, (payload) => {
+          console.log("Foreground Message:", payload);
+          const { title, body, icon } = payload.notification || {};
+          const data = payload.data || {};
 
-        if (Notification.permission === 'granted') {
-          const messaging = getMessaging(app);
-          const registration = await navigator.serviceWorker.ready;
-
-          const token = await getToken(messaging, {
-            vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
-            serviceWorkerRegistration: registration
-          });
-
-          if (token) {
-            await storage.saveUserToken(token);
+          // Allow system notification even in foreground for consistent experience
+          // Use 'tag' to prevent duplication if edge case occurs
+          if (Notification.permission === 'granted') {
+            new Notification(title || 'VisitSafe', {
+              body: body,
+              icon: icon || '/icons/icon-192.png',
+              tag: data.tag || data.visitorId || 'default', // Critical for dedupe
+              data: data,
+              requireInteraction: true // consistent with background
+            });
           }
+        });
 
-          onMessage(messaging, async (payload) => {
-            const { title, body, icon } = payload.notification || {};
-            const { requestId, visitorName } = payload.data || {};
-
-            if (registration) {
-              registration.showNotification(title || 'New Visitor Request', {
-                body: body || `${visitorName} wants to visit`,
-                icon: icon || '/icons/icon-192.png',
-                badge: '/icons/icon-192.png',
-                tag: requestId || 'default',
-                data: payload.data,
-                requireInteraction: true,
-                actions: [
-                  { action: 'APPROVE_VISITOR', title: 'Approve' },
-                  { action: 'REJECT_VISITOR', title: 'Reject' }
-                ]
-              });
-            }
-          });
-        }
       } catch (error) {
         console.error('Error initializing notifications:', error);
       }
