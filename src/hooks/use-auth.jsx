@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { storage } from "../lib/storage";
 import { useQueryClient } from "@tanstack/react-query";
-import { requestToken } from "../lib/firebase-messaging";
+import { requestPushAfterLogin } from "../lib/onesignal";
 
 const AuthContext = createContext(null);
 
@@ -34,9 +34,8 @@ export function AuthProvider({ children }) {
           setUser(currentUser);
           setRole(currentUser?.role ?? null);
           queryClient.setQueryData(["/api/user"], currentUser);
-          // Request permission/token on session restore
-          if (currentUser) {
-            requestToken().catch(console.error);
+          if (currentUser?.username) {
+            requestPushAfterLogin(currentUser.username).catch(() => {});
           }
         }
       } catch (err) {
@@ -64,8 +63,9 @@ export function AuthProvider({ children }) {
       setRole(loggedInUser?.role ?? null);
       queryClient.setQueryData(["/api/user"], loggedInUser);
       
-      // Request permission/token on login
-      requestToken().catch(console.error);
+      if (loggedInUser?.username) {
+        requestPushAfterLogin(loggedInUser.username).catch(() => {});
+      }
 
       options.onSuccess?.(loggedInUser);
     } catch (error) {
