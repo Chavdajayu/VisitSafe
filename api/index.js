@@ -16,6 +16,7 @@ import visitorDetails from '../server-lib/visitorDetails.js';
 import visitorDecision from '../server-lib/visitorDecision.js';
 import visitorAction from '../server-lib/visitor-action.js';
 import sendVisitorNotification from '../server-lib/sendVisitorNotification.js';
+import visitorDecisionSimple from '../server-lib/visitorDecisionSimple.js';
 
 const handlers = {
   createOwner,
@@ -35,6 +36,8 @@ const handlers = {
   'visitor-details': visitorDetails,
   'visitor-decision': visitorDecision,
   'visitor-action': visitorAction,
+  // CamelCase alias expected by service worker: /api/visitorDecision
+  visitorDecision: visitorDecisionSimple,
   sendVisitorNotification,
 };
 

@@ -415,7 +415,8 @@ class StorageService {
           body: JSON.stringify({
             residentUsername: username,
             visitorName: data.visitorName,
-            requestId: visitorId
+            requestId: visitorId,
+            residencyId: residencyId
           })
         });
         if (!resp.ok) {

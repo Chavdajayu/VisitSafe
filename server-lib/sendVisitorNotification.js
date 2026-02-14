@@ -3,7 +3,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
   try {
-    const { residentUsername, visitorName, requestId } = req.body || {};
+    const { residentUsername, visitorName, requestId, residencyId } = req.body || {};
     if (!residentUsername || !visitorName || !requestId) {
       return res.status(400).json({ error: "Missing residentUsername, visitorName or requestId" });
     }
@@ -23,11 +23,20 @@ export default async function handler(req, res) {
       target_channel: "push",
       headings: { en: "New Visitor Request" },
       contents: { en: `Visitor ${visitorName} is waiting at the gate.` },
-      data: { requestId },
+      data: { requestId, visitorId: requestId, residencyId: residencyId || null },
+      // Show action buttons on web push
       buttons: [
-        { id: "approve", text: "Approve" },
-        { id: "reject", text: "Reject" }
-      ]
+        { id: "approve", text: "✅ Approve" },
+        { id: "reject", text: "❌ Reject" }
+      ],
+      web_push: {
+        notification: {
+          actions: [
+            { action: "approve", title: "✅ Approve" },
+            { action: "reject", title: "❌ Reject" }
+          ]
+        }
+      }
     };
     const response = await fetch("https://api.onesignal.com/notifications", {
       method: "POST",
