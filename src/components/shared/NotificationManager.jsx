@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/use-auth.jsx';
 import { getMessaging, onMessage, isSupported } from 'firebase/messaging';
 import { app } from '@/lib/firebase';
 import { requestToken } from '@/lib/firebase-messaging';
+import { toast } from '@/hooks/use-toast';
 
 export function NotificationManager() {
   const { user } = useAuth();
@@ -27,19 +28,14 @@ export function NotificationManager() {
         onMessage(messaging, (payload) => {
           console.log("Foreground Message:", payload);
           const { title, body, icon } = payload.notification || {};
-          const data = payload.data || {};
+          // const data = payload.data || {}; // Future use if needed for actions
 
-          // Allow system notification even in foreground for consistent experience
-          // Use 'tag' to prevent duplication if edge case occurs
-          if (Notification.permission === 'granted') {
-            new Notification(title || 'VisitSafe', {
-              body: body,
-              icon: icon || '/icons/icon-192.png',
-              tag: data.tag || data.visitorId || 'default', // Critical for dedupe
-              data: data,
-              requireInteraction: true // consistent with background
-            });
-          }
+          // Use In-App Toast for foreground messages
+          toast({
+            title: title || "New Notification",
+            description: body,
+            duration: 5000,
+          });
         });
 
       } catch (error) {

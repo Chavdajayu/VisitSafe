@@ -64,7 +64,7 @@ export const clearToken = async (userId, role, residencyId) => {
 
 const saveTokenToFirestore = async (token, userId, role, residencyId) => {
   try {
-    if (!residencyId || !userId) return;
+    if (!residencyId || !userId || !token) return;
 
     let userRef = null;
     let fieldKey = 'fcmToken';
@@ -81,16 +81,18 @@ const saveTokenToFirestore = async (token, userId, role, residencyId) => {
     }
 
     if (userRef) {
-      // 1. Check existing to avoid redundant writes
+      // 1. Check existing to avoid redundant writes if explicitly the same
+      // However, we MUST ensure the token is associated with THIS user.
       const docSnap = await getDoc(userRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data[fieldKey] === token) {
-          return; // Already up to date
+          console.log("Token already up to date for", userId);
+          return;
         }
       }
 
-      // 2. Overwrite token (One device policy as requested)
+      // 2. Overwrite token (One device policy enforced by overwriting)
       await setDoc(userRef, {
         [fieldKey]: token,
         [timestampKey]: serverTimestamp()
@@ -105,16 +107,26 @@ const saveTokenToFirestore = async (token, userId, role, residencyId) => {
 
 const removeTokenFromFirestore = async (userId, role, residencyId) => {
   try {
-    // Logic to remove token field...
-    // similar to save but setting to null or deleteField()
-    // Omitted for brevity unless strictly needed, but "Token must be invalidated" in request.
-    // If I use setDoc with merge, I can just set it to null.
+    if (!residencyId || !userId) return;
+
     let userRef = null;
-    if (role === "resident") {
+    let fieldKey = 'fcmToken';
+
+    if (role === "admin") {
+      userRef = doc(db, "residencies", residencyId);
+      fieldKey = 'adminFcmToken';
+    } else if (role === "resident") {
       userRef = doc(db, "residencies", residencyId, "residents", userId);
-      await updateDoc(userRef, { fcmToken: null });
+    } else if (role === "guard") {
+      userRef = doc(db, "residencies", residencyId, "guards", userId);
     }
-    // ... helper logic handles other roles similarly or omitted
+
+    if (userRef) {
+      await updateDoc(userRef, {
+        [fieldKey]: null
+      });
+      console.log("Token removed from Firestore for", userId);
+    }
   } catch (e) {
     console.error("Failed to remove token from DB", e);
   }

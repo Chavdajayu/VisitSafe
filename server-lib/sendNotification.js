@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       // Strategy 2: Find by Block + Flat (legacy)
       try {
         const flatDoc = await db().collection('residencies').doc(residencyId).collection('flats').doc(targetId).get();
-        
+
         if (flatDoc.exists) {
           const flatData = flatDoc.data();
           const flatNumber = String(flatData.number);
@@ -52,12 +52,12 @@ export default async function handler(req, res) {
 
           if (blockId) {
             const blockDoc = await db().collection('residencies').doc(residencyId).collection('blocks').doc(blockId).get();
-            
+
             if (blockDoc.exists) {
               const blockData = blockDoc.data();
               const blockName = blockData.name;
               const normalizedBlock = blockName.toUpperCase().includes('BLOCK') ? blockName : `BLOCK ${blockName}`;
-              
+
               const [snap1, snap2] = await Promise.all([
                 residentsRef.where('flat', '==', flatNumber).where('block', '==', normalizedBlock).get(),
                 residentsRef.where('flat', '==', flatNumber).where('block', '==', blockName).get()
@@ -83,27 +83,64 @@ export default async function handler(req, res) {
 
     }
 
-    // Remove duplicates
-    tokens = [...new Set(tokens)];
+    // Remove duplicates and filter invalid
+    tokens = [...new Set(tokens)].filter(t => t && t.length > 10);
 
     if (tokens.length === 0) {
-      return res.status(200).json({ 
-        success: true, 
-        sentCount: 0, 
-        message: 'No residents found with FCM tokens' 
+      return res.status(200).json({
+        success: true,
+        sentCount: 0,
+        message: 'No residents found with valid FCM tokens'
       });
     }
 
-    // Prepare FCM payload with action buttons for visitor requests
+    // Professional Payload Design
+    const baseNotification = {
+      title: title,
+      body: body,
+      // Icon: Small icon for notification bar (android)
+      // We rely on 'default' if not set, or a specific asset
+      // Note: 'icon' in notification payload is the LARGE icon on right/left
+      // 'badge' is the small icon in status bar
+      // However, for consistency we use a standard relative path if available
+    };
+
+    // Timestamp for deduplication/tagging
+    const timestamp = Date.now().toString();
+    const tag = data.tag || data.visitorId || `msg_${timestamp}`;
+
     const payload = {
-      notification: {
-        title: title,
-        body: body,
-      },
+      notification: baseNotification,
       data: {
         ...data,
         click_action: '/',
-        timestamp: Date.now().toString(),
+        timestamp: timestamp,
+        tag: tag, // Redundant but helpful in data
+      },
+      // Android specific config for better UX
+      android: {
+        priority: 'high',
+        notification: {
+          icon: 'stock_ticker_update', // standard resource name or remove to use default
+          color: '#000000', // Brand color
+          tag: tag, // CRITICAL for de-duplication
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK' // or standard web intent
+        }
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high'
+        },
+        notification: {
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-192.png', // Small monochrome
+          tag: tag, // Replaces previous with same tag
+          renotify: true, // Vibrate again
+          requireInteraction: data.requireInteraction === 'true',
+        },
+        fcmOptions: {
+          link: '/'
+        }
       },
       tokens: tokens,
     };
@@ -111,9 +148,11 @@ export default async function handler(req, res) {
     // For visitor requests, send individual notifications with approval URLs
     if (data.actionType === 'VISITOR_REQUEST' && targetType === 'specific_flat') {
       const individualNotifications = [];
-      
-      // Send same notification to all residents (no resident-specific data needed)
+
       for (const [token, residentId] of Object.entries(tokenToDocId)) {
+        // Tag logic for visitor request - unique per request ID to allow updates but prevent dupes
+        const visitorTag = `visitor_${data.visitorId}`;
+
         const individualPayload = {
           notification: {
             title: title,
@@ -131,24 +170,53 @@ export default async function handler(req, res) {
             purpose: data.purpose || 'Visit',
             click_action: '/',
             timestamp: Date.now().toString(),
+            tag: visitorTag
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              tag: visitorTag,
+              clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+              icon: 'stock_ticker_update',
+              color: '#000000'
+            }
+          },
+          webpush: {
+            headers: {
+              Urgency: 'high'
+            },
+            notification: {
+              icon: '/icons/icon-192.png',
+              badge: '/icons/icon-192.png',
+              tag: visitorTag,
+              renotify: true,
+              requireInteraction: true,
+              actions: [
+                { action: 'approve', title: '✅ Approve' },
+                { action: 'reject', title: '❌ Reject' }
+              ]
+            },
+            fcmOptions: {
+              link: '/'
+            }
           },
           token: token,
         };
-        
+
         individualNotifications.push(admin.messaging().send(individualPayload));
       }
-      
+
       // Send all individual notifications
       const results = await Promise.allSettled(individualNotifications);
       const successCount = results.filter(r => r.status === 'fulfilled').length;
       const failureCount = results.filter(r => r.status === 'rejected').length;
-      
+
       console.log(`Visitor notifications sent: ${successCount} success, ${failureCount} failed`);
-      
-      return res.status(200).json({ 
-        success: true, 
-        sentCount: successCount, 
-        failureCount: failureCount 
+
+      return res.status(200).json({
+        success: true,
+        sentCount: successCount,
+        failureCount: failureCount
       });
     }
 
@@ -168,7 +236,7 @@ export default async function handler(req, res) {
 
       if (failedTokens.length > 0) {
         console.log(`Removing ${failedTokens.length} invalid tokens...`);
-        
+
         const batch = db().batch();
         let batchCount = 0;
 
@@ -190,10 +258,10 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ 
-      success: true, 
-      sentCount: response.successCount, 
-      failureCount: response.failureCount 
+    return res.status(200).json({
+      success: true,
+      sentCount: response.successCount,
+      failureCount: response.failureCount
     });
 
   } catch (error) {

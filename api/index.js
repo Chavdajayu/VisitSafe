@@ -30,6 +30,7 @@ const handlers = {
   'update-request-status': updateRequestStatus,
   uploadResidentsFromPDF,
   sendNotification,
+  'send-notification': sendNotification,
   'visitor-details': visitorDetails,
   'visitor-decision': visitorDecision,
   'visitor-action': visitorAction,
@@ -40,20 +41,20 @@ export default async function handler(req, res) {
   // Expected format: /api/<route_name>?...
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
-  
+
   // Extract the last segment of the path as the route name
   // e.g. /api/createOwner -> createOwner
   // e.g. /api/update-request-status -> update-request-status
   let route = pathname.split('/').pop();
-  
+
   // Handle case where URL might be just /api (though vercel.json rewrites /api/(.*))
   if (!route || route === 'api') {
-      return res.status(404).json({ error: 'API route not specified' });
+    return res.status(404).json({ error: 'API route not specified' });
   }
 
   // Check if handler exists
   const handlerFn = handlers[route];
-  
+
   if (handlerFn) {
     try {
       return await handlerFn(req, res);

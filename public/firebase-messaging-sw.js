@@ -94,8 +94,6 @@ self.addEventListener('notificationclick', function (event) {
     const promiseChain = handleVisitorAction(action, data)
       .then((result) => {
         if (result && result.success) {
-          // Optional: Show a quick "Done" toast or silent notification
-          // For now, we trust it worked. 
           console.log('[SW] Action success');
         }
       });
@@ -110,7 +108,8 @@ self.addEventListener('notificationclick', function (event) {
           // Check if app is already open
           for (let i = 0; i < windowClients.length; i++) {
             const client = windowClients[i];
-            if (client.url.includes(self.location.origin) && 'focus' in client) {
+            // Fix: Ensure we focus correctly on existing window
+            if ('focus' in client) {
               return client.focus();
             }
           }
@@ -157,8 +156,7 @@ async function handleVisitorAction(action, data) {
     return result;
   } catch (e) {
     console.error('[SW] Action Fetch Error:', e);
-    // Fallback: Open window if background fetch fails?
-    // Maybe later.
+    // Notify failure so UI can potentially react if open
     notifyClientsOfAction(action, visitorId, false);
   }
 }

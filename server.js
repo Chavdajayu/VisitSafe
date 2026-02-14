@@ -1,15 +1,16 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import importResidentsHandler from './api/importResidents.js';
-import updateRequestHandler from './api/update-request-status.js';
-import ownerLoginHandler from './api/ownerLogin.js';
-import ownerResidenciesHandler from './api/ownerResidencies.js';
-import toggleServiceHandler from './api/toggleService.js';
-import createOwnerHandler from './api/createOwner.js';
-import residencyStatusHandler from './api/residencyStatus.js';
-import registerResidencyHandler from './api/registerResidency.js';
-import deleteResidencyHandler from './api/deleteResidency.js';
+import importResidentsHandler from './api/importResidents.js'; // Keep if wrapper exists
+import updateRequestHandler from './server-lib/update-request-status.js';
+import ownerLoginHandler from './server-lib/ownerLogin.js';
+import ownerResidenciesHandler from './server-lib/ownerResidencies.js';
+import toggleServiceHandler from './server-lib/toggleService.js';
+import createOwnerHandler from './server-lib/createOwner.js';
+import residencyStatusHandler from './server-lib/residencyStatus.js';
+import registerResidencyHandler from './server-lib/registerResidency.js';
+import deleteResidencyHandler from './server-lib/deleteResidency.js';
+import sendNotificationHandler from './server-lib/sendNotification.js';
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
@@ -49,6 +50,7 @@ app.post('/api/createOwner', adaptHandler(createOwnerHandler));
 app.get('/api/residencyStatus', adaptHandler(residencyStatusHandler));
 app.post('/api/registerResidency', adaptHandler(registerResidencyHandler));
 app.post('/api/deleteResidency', adaptHandler(deleteResidencyHandler));
+app.post('/api/send-notification', adaptHandler(sendNotificationHandler));
 
 const PORT = 3000;
 app.listen(PORT, () => {
