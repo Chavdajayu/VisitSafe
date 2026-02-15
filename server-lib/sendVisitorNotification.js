@@ -21,9 +21,17 @@ export default async function handler(req, res) {
       app_id: appId,
       include_external_user_ids: [residentUsername],
       target_channel: "push",
-      headings: { en: "New Visitor Request" },
+      headings: { en: "🚨 New Visitor Waiting" },
       contents: { en: `Visitor ${visitorName} is waiting at the gate.` },
-      data: { requestId, visitorId: requestId, residencyId: residencyId || null },
+      priority: 10,
+      android_priority: 10,
+      ttl: 3600,
+      chrome_web_icon: "https://visitsafe.qzz.io/icons/icon-192.png",
+      chrome_web_badge: "https://visitsafe.qzz.io/icons/badge.png",
+      chrome_web_vibrate: [500, 300, 500, 300, 500, 300, 800],
+      chrome_web_require_interaction: true,
+      chrome_web_renotify: true,
+      data: { residencyId: residencyId || null, visitorId: requestId, requestId, type: "visitor_request" },
       // Show action buttons on web push
       buttons: [
         { id: "approve", text: "✅ Approve" },
@@ -42,7 +50,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Key ${apiKey}`,
+        "Authorization": `Basic ${apiKey}`,
         "User-Agent": "VisitSafe-Server/1.0"
       },
       body: JSON.stringify(payload)
